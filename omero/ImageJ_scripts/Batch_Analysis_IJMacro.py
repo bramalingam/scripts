@@ -179,7 +179,7 @@ def upload_results(conn, results_path, params):
     """
     global tmp_dir
 
-    if not results_path:
+    if not os.path.isfile(results_path[0]):
         print "No results obtained from ImageJ"
         return
 
@@ -195,17 +195,11 @@ def upload_results(conn, results_path, params):
     
     object_ids = params["IDs"];
     object_id = object_ids[0];
+    omeroObject = conn.getObject(params.get("Data_Type"), int(object_id))
 
-    if params.get("Data_Type") == 'Dataset':
-        omeroObject = conn.getObject("Dataset", int(object_id))
-    elif params.get("Data_Type") == 'Project':
-        omeroObject = conn.getObject("Project", int(object_id))
-    elif params.get("Data_Type") == 'Image':
-        omeroObject = conn.getObject("Image", int(object_id))
-    elif params.get("Data_Type") == 'Screen':
-        omeroObject = conn.getObject("Screen", int(object_id))
-    elif params.get("Data_Type") == 'Plate':
-        omeroObject = conn.getObject("Plate"=, int(object_id))
+    if not omeroObject:
+        print "Not a valid ID"
+        return 
 
     name = "%d_%s" % (int(object_id), result_csv_name)
     ann = conn.createFileAnnfromLocalFile(
@@ -223,11 +217,7 @@ def upload_results(conn, results_path, params):
         ",", ann1.getFile().getName(), "Size:", ann1.getFile().getSize()
     omeroObject.linkAnnotation(ann1)
 
-    print "Results attached to Dataset"
-
-    else:
-        print "Not a valid Datatype"
-        return      
+    print "Results attached to Dataset"     
 
 def run(conn, params):
     """
@@ -246,7 +236,7 @@ def run(conn, params):
         print "Please enter a valid omero_object (Project/Dataset/Image) Id"
         return -1
 
-    if not params.get("File_Annotation")
+    if not params.get("File_Annotation"):
         print "Please attach a valid ImageJ macro file (*.ijm)"
         return -1
 
@@ -256,18 +246,21 @@ def run(conn, params):
         images = list(objects)
     elif params.get("Data_Type") == 'Project':
         for pId in params["IDs"]:
-            objects = conn.getObject("Project", pId)
-
+            project = conn.getObject("Project", pId)
+            if project:
+                for dataset in project.listChildren():
+                    for image in dataset.listChildren():
+                        images.append(image)
     elif params.get("Data_Type") == 'Dataset':
         for dsId in params["IDs"]:
-            ds = conn.getObject("Dataset", dsId)
-            if ds:
-                for i in ds.listChildren():
-                    images.append(i)
-    else
+            dataset = conn.getObject("Dataset", dsId)
+            if dataset:
+                for image in dataset.listChildren():
+                    images.append(image)
+    else:
         print "Analysis of Plates and Screens is not currently supported in this module."
         return -1
-        
+
     # Extract images
     image_names = extract_images(conn, images)
     print "LOG: Done printing %d images" % len(image_names)
@@ -282,7 +275,7 @@ def run(conn, params):
     macro_file = get_original_file(conn, dataType, object_id, fileAnn_id)
 
     # Run ImageJ
-    results = run_imagej(conn, image_names, macro_file)
+    results = run_imagej(image_names, macro_file)
 
     if results:
         # Upload results
@@ -388,7 +381,7 @@ OMERO @ %s """ % ("\n".join(image_names), macro_text,
         print "Error: unable to send email"  
 
 
-def run_imagej(conn, image_names, macro_file=None):
+def run_imagej(image_names, macro_file=None):
 
     global tmp_dir
 
@@ -424,7 +417,8 @@ run("Quit");
     out.close()
     # Run ImageJ
     try:
-        args = [IMAGEJ_CLASSPATH, "-macro",
+        # Xvcn : reference : http://forum.imagej.net/t/running-macro-in-headless-mode-on-error/161/2
+        args = ["Xvnc4 :$UID 2> /dev/null & export DISPLAY=:$UID & ",IMAGEJ_CLASSPATH, "-macro",
                 macro_open_file]
 
         # debug
@@ -436,6 +430,7 @@ run("Quit");
         std_out = results[0]
         std_err = results[1]
         print std_out
+        print std_err
         print "Done running ImageJ macro"
     
     except OSError, e:
